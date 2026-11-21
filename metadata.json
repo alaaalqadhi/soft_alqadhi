@@ -1,0 +1,10 @@
+{
+  "name": "Remix: لجنة الترقيم في جمارك تعز",
+  "description": "نظام متكامل لإدارة أرشيف اللوحات المستلمة وترقيم السيارات في جمارك تعز - مسؤول النظام: صادق القاضي",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

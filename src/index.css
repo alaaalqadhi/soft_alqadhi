@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Vazirmatn:wght@100..900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Vazirmatn", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #bae6fd;
+  --color-primary-300: #7dd3fc;
+  --color-primary-400: #38bdf8;
+  --color-primary-500: #0ea5e9;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
+  --color-primary-950: #082f49;
+
+  --radius-3xl: 2rem;
+  --radius-4xl: 2.5rem;
+  --radius-5xl: 3rem;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans antialiased overflow-hidden h-screen w-screen selection:bg-primary-500 selection:text-white;
+    direction: rtl;
+  }
+}
+
+@layer utilities {
+  .glass-dark {
+    @apply bg-slate-950/80 backdrop-blur-xl border border-white/10;
+  }
+  
+  .glass-light {
+    @apply bg-white/70 backdrop-blur-xl border border-slate-200/50;
+  }
+  
+  .card-premium {
+    @apply bg-white border border-slate-200/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-500;
+  }
+
+  .tech-border {
+    @apply border border-slate-200 relative;
+  }
+  
+  .tech-border::before {
+    content: '';
+    @apply absolute -top-[1px] -left-[1px] w-2 h-2 border-t-2 border-l-2 border-primary-500 opacity-0 transition-opacity duration-300;
+  }
+  
+  .group:hover .tech-border::before {
+    @apply opacity-100;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full hover:bg-primary-400 transition-colors;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.5; filter: blur(20px); }
+  50% { opacity: 0.8; filter: blur(30px); }
+}
+
+.bg-glow {
+  @apply absolute -z-10 rounded-full opacity-50;
+  animation: glow-pulse 8s ease-in-out infinite;
+}
+

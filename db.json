@@ -1,0 +1,57 @@
+{
+  "plates": [
+    {
+      "id": "1780067580870765",
+      "plate_number": "68530",
+      "plate_type": "خصوصي",
+      "received_date": "2026-05-29T00:00:00.000Z",
+      "status": "used"
+    },
+    {
+      "id": "178017362563799",
+      "plate_number": "68530",
+      "plate_type": "خصوصي",
+      "received_date": "2026-05-30T00:00:00.000Z",
+      "status": "available"
+    }
+  ],
+  "registrations": [
+    {
+      "id": "1780090832215478",
+      "plate_id": "1780067580870765",
+      "plate_number": "68530",
+      "plate_type": "خصوصي",
+      "vehicle_type": "لاندكروزر دير ادو صالون",
+      "vehicle_color": "ابيض لؤلؤي",
+      "model_year": "2016",
+      "chassis_number": "JTEBU3FU8GK110836",
+      "engine_number": "GRB317078",
+      "document_number": "9864277",
+      "owner_name": "",
+      "owner_phone": "",
+      "notes": "",
+      "registration_date": "2026-05-29T21:40:32.215Z",
+      "blood_type": "",
+      "id_type": "بطاقة شخصية",
+      "id_number": "",
+      "issue_place": "",
+      "address": "",
+      "vehicle_make": "تويوتا",
+      "cylinders": "6",
+      "fuel_type": "بترول",
+      "customs_office": "جمارك شحن عدن",
+      "witness1_name": "",
+      "witness1_id": "",
+      "witness1_relation": "",
+      "witness1_phone": "",
+      "witness1_address": "",
+      "witness2_name": "",
+      "witness2_id": "",
+      "witness2_relation": "",
+      "witness2_phone": "",
+      "witness2_address": "",
+      "owner_photo": "",
+      "plate_photo": ""
+    }
+  ]
+}
