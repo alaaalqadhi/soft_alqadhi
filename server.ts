@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import 'dotenv/config';
+dotenv.config();
 dotenv.config({ path: '.env.local' });
 import express from 'express';
 import path from 'path';
@@ -13,11 +13,19 @@ import { existsSync, readFileSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function cleanEnvValue(val: string | undefined): string {
+  return (val || '').trim().replace(/^["']|["']$/g, '').trim();
+}
+
 // Lazy initializable Gemini client
 let aiClient: GoogleGenAI | null = null;
 let cachedApiKey: string | null = null;
 function getGeminiClient() {
-  const key = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+  const key =
+    cleanEnvValue(process.env.GEMINI_API_KEY) ||
+    cleanEnvValue(process.env.GOOGLE_API_KEY) ||
+    cleanEnvValue(process.env.GOOGLE_GEMINI_API_KEY) ||
+    cleanEnvValue(process.env.GEMINI_KEY);
   if (!key) {
     throw new Error('مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) غير مضاف في إعدادات الخادم (Environment Variables). يرجى إضافته في إعدادات المشروع على Vercel ثم إعادة النشر (Redeploy).');
   }
@@ -120,9 +128,12 @@ for (const p of vercelEnvPaths) {
       const vercelEnvContent = readFileSync(p, 'utf-8');
       const vercelEnv = JSON.parse(vercelEnvContent);
       for (const [key, value] of Object.entries(vercelEnv)) {
-        if (value && typeof value === 'string' && !process.env[key]) {
-          process.env[key] = value;
-          console.log(`[VERCEL ENV] Loaded environmental variable: ${key} from ${p}`);
+        if (typeof value === 'string') {
+          const cleaned = cleanEnvValue(value);
+          if (cleaned && !cleanEnvValue(process.env[key])) {
+            process.env[key] = cleaned;
+            console.log(`[VERCEL ENV] Loaded environmental variable: ${key} from ${p}`);
+          }
         }
       }
       vercelEnvLoaded = true;
@@ -141,7 +152,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Database Connection
 const DEFAULT_DATABASE_URL = "postgresql://neondb_owner:npg_HOWZ16psMEtg@ep-steep-cell-ap2a94hb-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
-let dbUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
+let dbUrl = cleanEnvValue(process.env.DATABASE_URL) || DEFAULT_DATABASE_URL;
 
 // Ensure we warn if the URL is an HTTP/S REST API URL instead of Postgres protocol
 if (dbUrl && (dbUrl.startsWith("http://") || dbUrl.startsWith("https://"))) {
