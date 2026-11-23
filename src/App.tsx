@@ -287,25 +287,43 @@ export default function App() {
     sanitizeStylesheets();
   }, []);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent: boolean = false) => {
     if (!isLoggedIn) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setFetchError(null);
     try {
-      const [regsRes, statsRes] = await Promise.all([
-        fetch('/api/registrations'),
-        fetch('/api/stats')
+      const [regsResult, statsResult] = await Promise.allSettled([
+        fetch('/api/registrations?summary=1', { cache: 'no-store' }),
+        fetch('/api/stats', { cache: 'no-store' })
       ]);
 
-      if (!regsRes.ok || !statsRes.ok) {
-        throw new Error('فشل تحميل البيانات من الخادم أو تعذر الاتصال بالخدمات');
+      let regsData: Registration[] | null = null;
+      if (regsResult.status === 'fulfilled' && regsResult.value.ok) {
+        const parsed = await regsResult.value.json();
+        if (Array.isArray(parsed)) {
+          regsData = parsed;
+          setRegistrations(parsed);
+        }
       }
 
-      const regsData = await regsRes.json();
-      const statsData = await statsRes.json();
+      let statsData: Stats | null = null;
+      if (statsResult.status === 'fulfilled' && statsResult.value.ok) {
+        statsData = await statsResult.value.json();
+        setStats(statsData);
+      } else if (regsData) {
+        setStats({
+          total: regsData.length,
+          used: regsData.length,
+          available: 0,
+          privateCount: regsData.filter(r => r.plate_type === 'خصوصي').length,
+          transportCount: regsData.filter(r => r.plate_type === 'نقل').length,
+          recent: regsData.slice(0, 10)
+        });
+      }
 
-      setRegistrations(regsData);
-      setStats(statsData);
+      if (!regsData && !statsData) {
+        throw new Error('فشل تحميل البيانات من الخادم أو تعذر الاتصال بالخدمات');
+      }
     } catch (err: any) {
       let friendlyMessage = err.message || 'حدث خطأ في الاتصال بقاعدة البيانات';
       if (friendlyMessage.toLowerCase().includes('failed to fetch') || friendlyMessage.toLowerCase().includes('networkerror') || friendlyMessage.toLowerCase().includes('websocket')) {
@@ -314,13 +332,19 @@ export default function App() {
       setFetchError(friendlyMessage);
       console.error(err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [isLoggedIn]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (isLoggedIn && (activeTab === 'home' || activeTab === 'full_archive' || activeTab === 'reports')) {
+      fetchData(true);
+    }
+  }, [activeTab, isLoggedIn, fetchData]);
 
   // Self-healing background auto-retry loop for robust operation during hot reloads/reboots
   useEffect(() => {
@@ -499,7 +523,9 @@ export default function App() {
                       </div>
 
                       <div className="space-y-4">
-                        {stats?.recent && stats.recent.length > 0 ? stats.recent.slice(0, 5).map((reg) => (
+                        {(() => {
+                          const recentSource = stats?.recent && stats.recent.length > 0 ? stats.recent : registrations;
+                          return recentSource.length > 0 ? recentSource.slice(0, 5).map((reg) => (
                           <div key={reg.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50/50 hover:bg-white hover:card-shadow transition-all border border-transparent hover:border-slate-100 group">
                             <div className="flex items-center gap-6">
                               <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 group-hover:scale-110 group-hover:border-primary-100 transition-all">
@@ -549,7 +575,8 @@ export default function App() {
                               إبدأ عملية تقييد جديدة
                             </button>
                           </div>
-                        )}
+                        );
+                        })()}
                       </div>
                     </div>
 
@@ -606,9 +633,9 @@ export default function App() {
             ) : (
               <motion.div
                 key={activeTab}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
                 className="w-full min-h-full bg-slate-50 flex flex-col"
               >
                 <div className="flex-1 p-4 md:p-10">
@@ -1362,6 +1389,22 @@ function CertificateModal({ registration, onClose }: { registration: Registratio
     setOwnerPhotoSrc(registration.owner_photo || '');
     setPlateRotationFallback(0);
     setOwnerRotationFallback(0);
+
+    if (registration.id && registration.plate_photo === undefined && registration.owner_photo === undefined) {
+      let cancelled = false;
+      fetch(`/api/registrations/${registration.id}`, { cache: 'no-store' })
+        .then(res => (res.ok ? res.json() : null))
+        .then(fullReg => {
+          if (!cancelled && fullReg) {
+            if (fullReg.plate_photo) setPlatePhotoSrc(fullReg.plate_photo);
+            if (fullReg.owner_photo) setOwnerPhotoSrc(fullReg.owner_photo);
+          }
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
   }, [registration.id, registration.plate_photo, registration.owner_photo]);
 
   const rotateImage90 = (src: string): Promise<string> => {
@@ -2331,7 +2374,6 @@ function CertificateModal({ registration, onClose }: { registration: Registratio
 }
 const InputField = ({ label, value, onChange, placeholder, required, type = "text" }: any) => {
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const [isFocused, setIsFocused] = useState(false);
   const [pasteFeedback, setPasteFeedback] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
 
   useEffect(() => {
@@ -2383,8 +2425,6 @@ const InputField = ({ label, value, onChange, placeholder, required, type = "tex
     });
   };
 
-  const showPasteAction = isFocused || !value;
-
   return (
     <div className="space-y-2 group">
       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5 transition-colors group-focus-within:text-primary-500">
@@ -2395,45 +2435,38 @@ const InputField = ({ label, value, onChange, placeholder, required, type = "tex
           ref={inputRef}
           type={type}
           value={value ?? ''}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
           onPaste={() => setPasteFeedback(null)}
           onChange={(e) => {
             setPasteFeedback(null);
             onChange(e.target.value);
           }}
           placeholder={placeholder}
-          className={`w-full p-5 pr-6 ${showPasteAction ? 'pl-24' : 'pl-6'} bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none select-text focus:border-primary-500/20 focus:bg-white focus:shadow-[0_0_30px_rgba(14,165,233,0.08)] transition-all leading-relaxed`}
+          className="w-full p-5 pr-6 pl-20 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none select-text focus:border-primary-500/20 focus:bg-white transition-colors duration-150 leading-relaxed"
         />
-        {required && !value && (
-          <div className="pointer-events-none absolute left-[78px] top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse" />
-        )}
-        {showPasteAction && (
-          <button
-            type="button"
-            tabIndex={-1}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handlePasteClick}
-            title="لصق من الحافظة إلى الحقل"
-            className={`absolute left-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-all border ${
-              pasteFeedback?.type === 'success'
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                : 'bg-white text-slate-500 hover:text-primary-600 hover:border-primary-200 border-slate-200 shadow-sm active:scale-95'
-            }`}
-          >
-            {pasteFeedback?.type === 'success' ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
-                <span>تم</span>
-              </>
-            ) : (
-              <>
-                <ClipboardPaste className="w-3.5 h-3.5" />
-                <span>لصق</span>
-              </>
-            )}
-          </button>
-        )}
+        <button
+          type="button"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handlePasteClick}
+          title="لصق من الحافظة إلى الحقل"
+          className={`absolute left-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-colors border ${
+            pasteFeedback?.type === 'success'
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-white text-slate-500 hover:text-primary-600 hover:border-primary-200 border-slate-200 shadow-sm active:scale-95'
+          }`}
+        >
+          {pasteFeedback?.type === 'success' ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-emerald-600" />
+              <span>تم</span>
+            </>
+          ) : (
+            <>
+              <ClipboardPaste className="w-3.5 h-3.5" />
+              <span>لصق</span>
+            </>
+          )}
+        </button>
       </div>
       {pasteFeedback?.type === 'info' && (
         <p className="text-[11px] font-bold text-amber-600 mr-4">{pasteFeedback.message}</p>
@@ -2537,7 +2570,10 @@ function RegistrationView({ onRefresh }: { onRefresh?: () => void }) {
       addUpdate('fuel_type', cleanText(scannedData.fuel_type));
     } else if (type === 'owner_id') {
       addUpdate('owner_name', cleanText(scannedData.owner_name));
-      addUpdate('id_type', cleanText(scannedData.id_type));
+      const scannedIdType = cleanText(scannedData.id_type);
+      if (scannedIdType) {
+        addUpdate('id_type', scannedIdType.includes('جواز') ? 'جواز سفر' : 'بطاقة شخصية');
+      }
       addUpdate('id_number', cleanDigits(scannedData.id_number).replace(/\s+/g, ''));
       addUpdate('issue_place', cleanText(scannedData.issue_place));
       addUpdate('address', cleanText(scannedData.address));
@@ -2619,8 +2655,8 @@ function RegistrationView({ onRefresh }: { onRefresh?: () => void }) {
   }
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700 pb-20">
-      <div className="bg-white p-12 rounded-[4rem] border border-slate-100 card-shadow relative overflow-hidden group">
+    <div className="space-y-10 pb-20">
+      <div className="bg-white p-12 rounded-[4rem] border border-slate-100 card-shadow relative group">
         <div className="relative z-10">
           <div className="flex items-center justify-between mb-16">
             <div className="flex items-center gap-8">
@@ -2745,8 +2781,36 @@ function RegistrationView({ onRefresh }: { onRefresh?: () => void }) {
                 <InputField label="رقم الهاتف" value={formData.owner_phone} onChange={(v:any) => setFormData({...formData, owner_phone: v})} placeholder="771234567" />
                 <InputField label="فصيلة الدم" value={formData.blood_type} onChange={(v:any) => setFormData({...formData, blood_type: v})} placeholder="A+, O-..." />
                 
-                <InputField label="نوع الهوية" value={formData.id_type} onChange={(v:any) => setFormData({...formData, id_type: v})} placeholder="بطاقة شخصية / جواز" />
-                <InputField label="رقم الهوية" value={formData.id_number} onChange={(v:any) => setFormData({...formData, id_number: v})} placeholder="رقم البطاقة" />
+                <div className="space-y-2 group">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5">
+                    نوع الهوية
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-50 rounded-2xl h-[68px]">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, id_type: 'بطاقة شخصية' })}
+                      className={`rounded-xl font-black text-sm transition-all ${
+                        formData.id_type !== 'جواز سفر'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                      }`}
+                    >
+                      بطاقة شخصية
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, id_type: 'جواز سفر' })}
+                      className={`rounded-xl font-black text-sm transition-all ${
+                        formData.id_type === 'جواز سفر'
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                      }`}
+                    >
+                      جواز سفر
+                    </button>
+                  </div>
+                </div>
+                <InputField label="رقم الهوية" value={formData.id_number} onChange={(v:any) => setFormData({...formData, id_number: v})} placeholder={formData.id_type === 'جواز سفر' ? 'رقم الجواز' : 'رقم البطاقة'} />
                 <InputField label="مكان الإصدار" value={formData.issue_place} onChange={(v:any) => setFormData({...formData, issue_place: v})} placeholder="تعز، إب..." />
                 <div className="md:col-span-2 lg:col-span-3">
                    <InputField label="العنوان الحالي" value={formData.address} onChange={(v:any) => setFormData({...formData, address: v})} placeholder="المدينة - الحي - الشارع" />
@@ -2873,7 +2937,9 @@ function RegistrationView({ onRefresh }: { onRefresh?: () => void }) {
             </button>
           </div>
         </div>
-        <div className="absolute -top-64 -right-64 w-[500px] h-[500px] bg-emerald-50 rounded-full opacity-30 blur-[120px] pointer-events-none" />
+        <div className="absolute inset-0 overflow-hidden rounded-[4rem] pointer-events-none">
+          <div className="absolute -top-64 -right-64 w-[500px] h-[500px] bg-emerald-50 rounded-full opacity-30 blur-[120px]" />
+        </div>
       </div>
 
       {activeScanner && (
@@ -2899,16 +2965,24 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
   const [editingReg, setEditingReg] = useState<Registration | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const filtered = registrations.filter(r => 
-    r.owner_name.includes(searchTerm) || 
-    r.plate_number?.includes(searchTerm) || 
-    r.chassis_number.includes(searchTerm) ||
-    r.vehicle_type?.includes(searchTerm) ||
-    r.vehicle_model?.includes(searchTerm) ||
-    r.vehicle_make?.includes(searchTerm)
+  const sortedRegistrations = [...registrations].sort(
+    (a, b) => new Date(b.registration_date || 0).getTime() - new Date(a.registration_date || 0).getTime()
   );
 
-  const displayedRegistrations = searchTerm.trim() ? filtered : filtered.slice(0, 5);
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filtered = sortedRegistrations.filter(r => {
+    if (!normalizedSearch) return true;
+    return (
+      String(r.owner_name || '').toLowerCase().includes(normalizedSearch) ||
+      String(r.plate_number || '').toLowerCase().includes(normalizedSearch) ||
+      String(r.chassis_number || '').toLowerCase().includes(normalizedSearch) ||
+      String(r.vehicle_type || '').toLowerCase().includes(normalizedSearch) ||
+      String(r.vehicle_model || '').toLowerCase().includes(normalizedSearch) ||
+      String(r.vehicle_make || '').toLowerCase().includes(normalizedSearch)
+    );
+  });
+
+  const displayedRegistrations = normalizedSearch ? filtered : filtered.slice(0, 5);
 
   const handlePrint = () => {
     window.print();
@@ -2995,16 +3069,30 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <div className="space-y-2 group">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5 transition-colors group-focus-within:text-primary-500">نوع الهوية</label>
-                      <select 
-                        value={editingReg.id_type || 'بطاقة شخصية'} 
-                        onChange={e => setEditingReg({...editingReg, id_type: e.target.value})} 
-                        className="w-full p-5 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none focus:border-primary-500/20 focus:bg-white transition-all text-right h-[68px]"
-                      >
-                        <option>بطاقة شخصية</option>
-                        <option>جواز سفر</option>
-                        <option>بطاقة عائلية</option>
-                        <option>بطاقة عسكرية</option>
-                      </select>
+                      <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-50 rounded-2xl h-[68px]">
+                        <button
+                          type="button"
+                          onClick={() => setEditingReg({ ...editingReg, id_type: 'بطاقة شخصية' })}
+                          className={`rounded-xl font-black text-xs transition-all ${
+                            !String(editingReg.id_type || '').includes('جواز')
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                          }`}
+                        >
+                          بطاقة شخصية
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingReg({ ...editingReg, id_type: 'جواز سفر' })}
+                          className={`rounded-xl font-black text-xs transition-all ${
+                            String(editingReg.id_type || '').includes('جواز')
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                          }`}
+                        >
+                          جواز سفر
+                        </button>
+                      </div>
                     </div>
                     <InputField 
                       label="مكان الإصدار" 
@@ -3305,7 +3393,11 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
         <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
           <div>
             <h3 className="text-3xl font-black text-slate-800">الأرشيف العام للسيارات المرقمة</h3>
-            <p className="text-slate-400 font-bold text-sm">عرض آخر 5 معاملات مسجلة في الأرشيف فقط (استخدم خانة البحث للوصول إلى أي معاملة أخرى)</p>
+            <p className="text-slate-400 font-bold text-sm">
+              {normalizedSearch
+                ? `نتائج البحث: ${displayedRegistrations.length} معاملة`
+                : `عرض آخر ${Math.min(5, filtered.length)} من أصل ${filtered.length} معاملة مسجلة (استخدم خانة البحث للوصول إلى أي معاملة أخرى)`}
+            </p>
           </div>
           <div className="flex items-center gap-4 w-full md:w-auto">
             <div className="relative flex-1 md:w-80 group">
@@ -3318,6 +3410,17 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
                 className="w-full h-[60px] pr-14 pl-6 bg-slate-50 border-2 border-transparent rounded-2xl focus:border-primary-500 focus:bg-white outline-none font-bold text-lg transition-all"
               />
             </div>
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={() => onRefresh()}
+                className="h-[60px] px-5 bg-slate-100 text-slate-700 rounded-2xl font-black flex items-center gap-2 hover:bg-slate-200 transition-all no-print"
+                title="تحديث قائمة الأرشيف"
+              >
+                <RefreshCw className="w-5 h-5" />
+                تحديث
+              </button>
+            )}
             <button 
               onClick={handlePrint}
               className="h-[60px] px-8 bg-slate-900 text-white rounded-2xl font-black flex items-center gap-3 hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 no-print"

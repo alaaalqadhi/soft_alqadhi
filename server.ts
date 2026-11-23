@@ -677,18 +677,61 @@ const initDB = async () => {
 
 
   app.get('/api/registrations', async (req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    const isSummary = req.query.summary === '1';
     try {
       if (sql && !useLocalFallback) {
         try {
-          const registrations = await sql`SELECT * FROM registrations ORDER BY registration_date DESC`;
+          const registrations = isSummary
+            ? await sql`
+                SELECT
+                  id, plate_id, plate_number, plate_type, vehicle_type, vehicle_color,
+                  model_year, chassis_number, engine_number, document_number,
+                  owner_name, owner_phone, notes, registration_date,
+                  blood_type, id_type, id_number, issue_place, address,
+                  vehicle_make, vehicle_model, vehicle_shape, cylinders, fuel_type, customs_office,
+                  witness1_name, witness1_id, witness1_relation, witness1_phone, witness1_address,
+                  witness2_name, witness2_id, witness2_relation, witness2_phone, witness2_address
+                FROM registrations
+                ORDER BY registration_date DESC, id DESC
+              `
+            : await sql`SELECT * FROM registrations ORDER BY registration_date DESC, id DESC`;
           return res.json(registrations);
         } catch (dbErr) {
           console.warn('[DB GET REGS FALLBACK] Failed to read registrations from cloud, falling back to local text file:', dbErr);
         }
       }
       const db = await readLocalDb();
-      const registrations = [...db.registrations].sort((a, b) => new Date(b.registration_date).getTime() - new Date(a.registration_date).getTime());
-      res.json(registrations);
+      const sorted = [...db.registrations].sort((a, b) => new Date(b.registration_date).getTime() - new Date(a.registration_date).getTime());
+      if (isSummary) {
+        return res.json(sorted.map(({ owner_photo, plate_photo, ...rest }) => rest));
+      }
+      res.json(sorted);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/registrations/:id', async (req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    try {
+      const { id } = req.params;
+      if (sql && !useLocalFallback) {
+        try {
+          const rows = await sql`SELECT * FROM registrations WHERE id = ${id}`;
+          if (rows && rows.length > 0) {
+            return res.json(rows[0]);
+          }
+        } catch (dbErr) {
+          console.warn('[DB GET REG BY ID FALLBACK] Failed to read registration from cloud:', dbErr);
+        }
+      }
+      const db = await readLocalDb();
+      const found = db.registrations.find(r => r.id === id);
+      if (!found) {
+        return res.status(404).json({ error: 'المعاملة غير موجودة' });
+      }
+      res.json(found);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1003,13 +1046,26 @@ const initDB = async () => {
   });
 
   app.get('/api/stats', async (req, res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     try {
       if (sql && !useLocalFallback) {
         try {
           const [{ count: usedStr }] = await sql`SELECT count(*) FROM registrations`;
           const [{ count: privStr }] = await sql`SELECT count(*) FROM registrations WHERE plate_type = 'خصوصي'`;
           const [{ count: transStr }] = await sql`SELECT count(*) FROM registrations WHERE plate_type = 'نقل'`;
-          const recent = await sql`SELECT * FROM registrations ORDER BY registration_date DESC LIMIT 10`;
+          const recent = await sql`
+            SELECT
+              id, plate_id, plate_number, plate_type, vehicle_type, vehicle_color,
+              model_year, chassis_number, engine_number, document_number,
+              owner_name, owner_phone, notes, registration_date,
+              blood_type, id_type, id_number, issue_place, address,
+              vehicle_make, vehicle_model, vehicle_shape, cylinders, fuel_type, customs_office,
+              witness1_name, witness1_id, witness1_relation, witness1_phone, witness1_address,
+              witness2_name, witness2_id, witness2_relation, witness2_phone, witness2_address
+            FROM registrations
+            ORDER BY registration_date DESC, id DESC
+            LIMIT 10
+          `;
 
           const used = parseInt(usedStr as string, 10) || 0;
           const privateCount = parseInt(privStr as string, 10) || 0;
@@ -1034,7 +1090,7 @@ const initDB = async () => {
       const privateCount = db.registrations.filter(r => r.plate_type === 'خصوصي').length;
       const transportCount = db.registrations.filter(r => r.plate_type === 'نقل').length;
       const sortedRegs = [...db.registrations].sort((a,b) => new Date(b.registration_date).getTime() - new Date(a.registration_date).getTime());
-      const recent = sortedRegs.slice(0, 10);
+      const recent = sortedRegs.slice(0, 10).map(({ owner_photo, plate_photo, ...rest }) => rest);
 
       res.json({
         total: used,
