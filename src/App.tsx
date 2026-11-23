@@ -41,7 +41,9 @@ import {
   RefreshCw,
   Maximize2,
   Minimize2,
-  RotateCw
+  RotateCw,
+  ClipboardPaste,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import html2canvas from 'html2canvas';
@@ -50,19 +52,11 @@ import { AIScannerModal } from './components/AIScannerModal';
 import { PhotoCaptureInput } from './components/PhotoCaptureInput';
 
 // Types
-type MenuChoice = 'archive' | 'register' | 'full_archive' | 'reports' | 'home';
-
-interface Plate {
-  id: string;
-  plate_number: string;
-  plate_type: string;
-  received_date: string;
-  status: 'available' | 'used';
-}
+type MenuChoice = 'register' | 'full_archive' | 'reports' | 'home';
 
 interface Registration {
   id: string;
-  plate_id: string;
+  plate_id?: string | null;
   vehicle_type: string;
   vehicle_color: string;
   model_year: string;
@@ -104,8 +98,10 @@ interface Stats {
   total: number;
   used: number;
   available: number;
+  privateCount?: number;
+  transportCount?: number;
   recent: Registration[];
-  databaseType?: 'cloud' | 'local';
+  databaseType?: 'cloud' | 'local' | 'cloud_offline';
 }
 
 const getFriendlyErrorMessage = (err: any, fallback: string = 'حدث خطأ غير متوقع'): string => {
@@ -149,7 +145,6 @@ function Sidebar({ activeTab, setActiveTab, onLogout, isCollapsed, setIsCollapse
 }) {
   const menuItems = [
     { id: 'home', label: 'الرئيسية', icon: ShieldCheck },
-    { id: 'archive', label: 'الأرشيف الفني', icon: ClipboardList },
     { id: 'register', label: 'ترقيم جديد', icon: PlusCircle },
     { id: 'full_archive', label: 'البحث والتدقيق', icon: Search },
     { id: 'reports', label: 'الإحصائيات', icon: FileText },
@@ -272,9 +267,7 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [activeTab, setActiveTab] = useState<MenuChoice>('home');
   const [selectedReg, setSelectedReg] = useState<Registration | null>(null);
-  const [plates, setPlates] = useState<Plate[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
-  const [availablePlates, setAvailablePlates] = useState<Plate[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -299,23 +292,19 @@ export default function App() {
     setLoading(true);
     setFetchError(null);
     try {
-      const [platesRes, regsRes, statsRes] = await Promise.all([
-        fetch('/api/plates'),
+      const [regsRes, statsRes] = await Promise.all([
         fetch('/api/registrations'),
         fetch('/api/stats')
       ]);
 
-      if (!platesRes.ok || !regsRes.ok || !statsRes.ok) {
+      if (!regsRes.ok || !statsRes.ok) {
         throw new Error('فشل تحميل البيانات من الخادم أو تعذر الاتصال بالخدمات');
       }
 
-      const platesData = await platesRes.json();
       const regsData = await regsRes.json();
       const statsData = await statsRes.json();
 
-      setPlates(platesData);
       setRegistrations(regsData);
-      setAvailablePlates(platesData.filter((p: Plate) => p.status === 'available'));
       setStats(statsData);
     } catch (err: any) {
       let friendlyMessage = err.message || 'حدث خطأ في الاتصال بقاعدة البيانات';
@@ -394,7 +383,6 @@ export default function App() {
             </button>
             <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
               {activeTab === 'home' ? 'نظرة عامة' : 
-               activeTab === 'archive' ? 'سجل المخزون' : 
                activeTab === 'register' ? 'ترقيم مركبة' : 
                activeTab === 'full_archive' ? 'قاعة البيانات' : 
                'التحليل الرقمي'}
@@ -446,9 +434,9 @@ export default function App() {
 
                       <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-8">
                         <div className="p-8 bg-white/5 rounded-3xl border border-white/5 backdrop-blur-md hover:bg-white/10 transition-all">
-                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">معدل الإنجـاز</span>
+                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">إجمالي المركبات المرقمة</span>
                           <div className="flex items-end gap-3">
-                            <span className="text-5xl font-black tabular-nums">{stats?.recent?.length || 0}</span>
+                            <span className="text-5xl font-black tabular-nums">{stats?.used ?? registrations.length}</span>
                             <span className="text-xs font-black text-slate-600 pb-2 uppercase">Ops</span>
                           </div>
                           <div className="mt-6 w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -461,17 +449,17 @@ export default function App() {
                           </div>
                         </div>
                         <div className="p-8 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-all">
-                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">اللوحات المتاحـة</span>
+                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">لوحات خصوصي</span>
                           <div className="flex items-end gap-3">
-                             <span className="text-4xl font-black text-primary-400 tabular-nums">{stats?.available || 0}</span>
-                             <span className="text-xs font-black text-slate-600 pb-1.5 opacity-50 italic">Plates</span>
+                             <span className="text-4xl font-black text-primary-400 tabular-nums">{stats?.privateCount ?? registrations.filter(r => r.plate_type === 'خصوصي').length}</span>
+                             <span className="text-xs font-black text-slate-600 pb-1.5 opacity-50 italic">Private</span>
                           </div>
                         </div>
                         <div className="p-8 bg-white/5 rounded-3xl border border-white/5 hover:bg-white/10 transition-all">
-                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">إجمالي المخـزون</span>
+                          <span className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4">لوحات نقل</span>
                           <div className="flex items-end gap-3">
-                             <span className="text-4xl font-black tabular-nums">{stats?.total || 0}</span>
-                             <span className="text-xs font-black text-slate-600 pb-1.5 opacity-50 italic">Units</span>
+                             <span className="text-4xl font-black text-rose-400 tabular-nums">{stats?.transportCount ?? registrations.filter(r => r.plate_type === 'نقل').length}</span>
+                             <span className="text-xs font-black text-slate-600 pb-1.5 opacity-50 italic">Transport</span>
                           </div>
                         </div>
                       </div>
@@ -511,7 +499,7 @@ export default function App() {
                       </div>
 
                       <div className="space-y-4">
-                        {stats?.recent && stats.recent.length > 0 ? stats.recent.map((reg) => (
+                        {stats?.recent && stats.recent.length > 0 ? stats.recent.slice(0, 5).map((reg) => (
                           <div key={reg.id} className="flex items-center justify-between p-6 rounded-[2rem] bg-slate-50/50 hover:bg-white hover:card-shadow transition-all border border-transparent hover:border-slate-100 group">
                             <div className="flex items-center gap-6">
                               <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 group-hover:scale-110 group-hover:border-primary-100 transition-all">
@@ -652,10 +640,9 @@ export default function App() {
                   )}
                   
                   <div className="h-full custom-scrollbar">
-                    {activeTab === 'archive' && <ArchiveView plates={plates} />}
-                    {activeTab === 'register' && <RegistrationView availablePlates={availablePlates} setActiveTab={setActiveTab} />}
+                    {activeTab === 'register' && <RegistrationView onRefresh={fetchData} />}
                     {activeTab === 'full_archive' && <FullArchiveView registrations={registrations} onRefresh={fetchData} />}
-                    {activeTab === 'reports' && <ReportsView stats={stats} plates={plates} registrations={registrations} />}
+                    {activeTab === 'reports' && <ReportsView stats={stats} registrations={registrations} />}
                   </div>
                 </div>
               </motion.div>
@@ -787,292 +774,7 @@ function LoginView({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function ArchiveView({ plates }: { plates: Plate[] }) {
-  const [formData, setFormData] = useState({
-    plate_number: '',
-    plate_type: 'خصوصي',
-    received_date: new Date().toISOString().split('T')[0]
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState('');
-  const [editingPlate, setEditingPlate] = useState<Plate | null>(null);
 
-  const handleDelete = async (id: string, status: string) => {
-    if (status === 'used') {
-      alert('لا يمكن حذف لوحة مستخدمة بالفعل. يجب حذف سجل الترقيم المرتبط بها أولاً.');
-      return;
-    }
-    if (!confirm('هل تريد حذف هذه اللوحة نهائياً من الأرشيف؟')) return;
-    try {
-      const res = await fetch(`/api/plates/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('فشل الحذف');
-      window.location.reload();
-    } catch (err: any) {
-      alert(getFriendlyErrorMessage(err, 'فشل الحذف'));
-    }
-  };
-
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingPlate) return;
-    try {
-      const res = await fetch(`/api/plates/${editingPlate.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingPlate)
-      });
-      if (!res.ok) throw new Error('فشل التحديث');
-      setEditingPlate(null);
-      window.location.reload();
-    } catch (err: any) {
-      alert(getFriendlyErrorMessage(err, 'فشل التحديث'));
-    }
-  };
-
-  const handleSubmit = async () => {
-    if (!formData.plate_number || !formData.received_date) {
-      setError('الرجاء إدخال رقم اللوحة والتاريخ');
-      return;
-    }
-    setError('');
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/plates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'فشل الحفظ');
-      }
-      setSuccess(true);
-      setFormData({ ...formData, plate_number: '' });
-      setTimeout(() => {
-        setSuccess(false);
-        window.location.reload();
-      }, 2000);
-    } catch (err: any) {
-      setError(err.message || 'فشل الحفظ في الأرشيف');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-10 animate-in fade-in duration-700">
-      <AnimatePresence>
-        {editingPlate && (
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-[100] flex items-center justify-center p-6 no-print">
-               <motion.div 
-                 initial={{ scale: 0.95, opacity: 0, y: 20 }} 
-                 animate={{ scale: 1, opacity: 1, y: 0 }}
-                 exit={{ scale: 0.95, opacity: 0, y: 20 }}
-                 className="bg-white rounded-[2.5rem] p-10 max-w-lg w-full card-shadow space-y-8"
-               >
-                  <div className="flex items-center justify-between border-b border-slate-50 pb-6">
-                    <h3 className="text-2xl font-black text-slate-800">تعديل بيانات اللوحة</h3>
-                    <button onClick={() => setEditingPlate(null)} className="w-10 h-10 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center hover:bg-slate-100 transition-colors">
-                       <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                  <form onSubmit={handleUpdate} className="space-y-6">
-                     <div className="space-y-2">
-                        <label className="text-xs font-black text-slate-400 tracking-widest uppercase mr-2">رقم اللوحة</label>
-                        <input type="text" value={editingPlate.plate_number} onChange={e => setEditingPlate({...editingPlate, plate_number: e.target.value})} className="w-full p-4 bg-slate-50 border-2 border-transparent rounded-[1.25rem] focus:border-primary-500 focus:bg-white outline-none font-black text-xl transition-all" />
-                     </div>
-                     <div className="space-y-2">
-                        <label className="text-xs font-black text-slate-400 tracking-widest uppercase mr-2">نوع اللوحة</label>
-                        <select value={editingPlate.plate_type} onChange={e => setEditingPlate({...editingPlate, plate_type: e.target.value})} className="w-full p-4 bg-slate-50 border-2 border-transparent rounded-[1.25rem] focus:border-primary-500 focus:bg-white outline-none font-bold transition-all">
-                          <option>خصوصي</option>
-                          <option>نقل</option>
-                          <option>أجرة</option>
-                          <option>حكومي</option>
-                        </select>
-                     </div>
-                     <div className="space-y-2">
-                        <label className="text-xs font-black text-slate-400 tracking-widest uppercase mr-2">تاريخ الاستلام</label>
-                        <input type="date" value={new Date(editingPlate.received_date).toISOString().split('T')[0]} 
-                               onChange={e => setEditingPlate({...editingPlate, received_date: e.target.value})} className="w-full p-4 bg-slate-50 border-2 border-transparent rounded-[1.25rem] focus:border-primary-500 focus:bg-white outline-none font-bold transition-all" />
-                     </div>
-                     <div className="flex gap-4 pt-4">
-                        <button type="button" onClick={() => setEditingPlate(null)} className="flex-1 px-4 py-4 border border-slate-200 text-slate-600 rounded-2xl font-black transition-all hover:bg-slate-50">إلغاء التعديل</button>
-                        <button type="submit" className="flex-[2] px-6 py-4 bg-primary-600 text-white rounded-2xl font-black shadow-lg shadow-primary-200 transition-all hover:bg-primary-700">تزامن التغييرات</button>
-                     </div>
-                  </form>
-               </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      <div className="bg-white p-12 rounded-[4rem] border border-slate-100 card-shadow relative overflow-hidden group">
-        <div className="relative z-10">
-          <div className="flex items-center justify-between mb-16">
-            <div className="flex items-center gap-8">
-              <div className="w-20 h-20 bg-slate-900 rounded-[2rem] flex items-center justify-center shadow-2xl shadow-slate-200 group-hover:rotate-6 transition-transform duration-500">
-                <ClipboardList className="w-10 h-10 text-white" />
-              </div>
-              <div>
-                <h3 className="text-4xl font-black text-slate-800 tracking-tight">أرشفـة اللوحـات الواردة</h3>
-                <p className="text-slate-400 font-black text-sm uppercase tracking-widest mt-1">Plate Inventory Digital Archive</p>
-              </div>
-            </div>
-            {success && (
-              <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="text-emerald-600 flex items-center gap-3 bg-emerald-50 px-6 py-3 rounded-2xl border border-emerald-100">
-                <CheckCircle2 className="w-6 h-6" /> <span className="font-black text-sm text-right">تم الحفظ بنجاح</span>
-              </motion.div>
-            )}
-            {error && (
-              <motion.div initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="text-red-600 flex items-center gap-3 bg-red-50 px-6 py-3 rounded-2xl border border-red-100">
-                <AlertCircle className="w-6 h-6" /> <span className="font-black text-sm tracking-tight text-right">{error}</span>
-              </motion.div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-8">
-            <div className="space-y-4">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-6">رقم اللوحة الجمركية</label>
-              <input 
-                type="text" 
-                value={formData.plate_number}
-                onChange={(e) => setFormData({...formData, plate_number: e.target.value})}
-                className="w-full p-6 bg-slate-50 border-2 border-transparent rounded-[2rem] focus:border-primary-500/20 focus:bg-white outline-none font-black text-3xl transition-all shadow-inner placeholder:text-slate-200 tracking-tighter" 
-                placeholder="00000" 
-              />
-            </div>
-            <div className="space-y-4">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-6">نـوع اللوحـة</label>
-              <select 
-                value={formData.plate_type}
-                onChange={(e) => setFormData({...formData, plate_type: e.target.value})}
-                className="w-full p-6 bg-slate-50 border-2 border-transparent rounded-[2rem] focus:border-primary-500/20 focus:bg-white outline-none font-black text-xl transition-all h-[84px] shadow-inner text-slate-700"
-              >
-                <option>خصوصي</option>
-                <option>نقل</option>
-                <option>أجرة</option>
-                <option>حكومي</option>
-                <option>دراجة نارية</option>
-              </select>
-            </div>
-            <div className="space-y-3">
-              <label className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mr-4">تاريخ استلام الرقم</label>
-              <input 
-                type="date" 
-                value={formData.received_date}
-                onChange={(e) => setFormData({...formData, received_date: e.target.value})}
-                className="w-full p-5 bg-slate-50 border-2 border-transparent rounded-[1.5rem] focus:border-primary-500 focus:bg-white outline-none font-bold text-lg transition-all h-[72px] shadow-inner" 
-              />
-            </div>
-            
-            <div className="md:col-span-2 xl:col-span-2 flex items-end">
-              <button 
-                onClick={handleSubmit}
-                disabled={submitting}
-                className="w-full bg-primary-600 text-white px-12 py-5 rounded-[1.75rem] font-black text-xl hover:bg-primary-700 transition-all shadow-2xl shadow-primary-100 flex items-center justify-center gap-5 disabled:opacity-50 active:scale-[0.98] group overflow-hidden relative"
-              >
-                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-                {submitting ? <Loader2 className="w-8 h-8 animate-spin" /> : <PlusCircle className="w-8 h-8 group-hover:rotate-90 transition-transform duration-700" />}
-                أرشفة الرقم في قاعدة البيانات
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-primary-50 rounded-full opacity-20 blur-3xl pointer-events-none" />
-      </div>
-
-      <div className="bg-white rounded-[3rem] border border-slate-100 card-shadow overflow-hidden">
-        <div className="p-10 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
-          <div className="flex items-center gap-5">
-            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100">
-               <Database className="w-6 h-6 text-primary-600" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-black text-slate-800">سجل الأرقام المؤرشفة</h3>
-              <p className="text-slate-400 font-bold text-sm tracking-tight text-right">قائمة كاملة باللوحات المتوفرة والمستخدمة في النظام</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-               <div className="relative">
-                  <Search className="w-4 h-4 absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input 
-                    type="text" 
-                    placeholder="بحث سريع..." 
-                    className="pr-10 pl-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-primary-500 font-bold text-sm w-64 transition-all"
-                  />
-               </div>
-               <div className="px-5 py-2.5 bg-primary-50 text-primary-600 rounded-2xl text-xs font-black border border-primary-100">
-                  الإجمالي: {plates.length}
-               </div>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse">
-            <thead>
-              <tr className="bg-slate-50/50">
-                <th className="p-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">رقم اللوحة</th>
-                <th className="p-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">نوع التصنيف</th>
-                <th className="p-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">تاريخ الإدخال</th>
-                <th className="p-6 text-xs font-black text-slate-400 uppercase tracking-widest text-right">حالة الرقم</th>
-                <th className="p-6 text-xs font-black text-slate-400 uppercase tracking-widest text-center">أدوات التحكم</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50 font-bold">
-              {plates.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-20 text-center text-slate-300 italic text-lg">لا توجد بيانات مؤرشفة لعرضها حالياً</td>
-                </tr>
-              ) : (
-                plates.map(plate => (
-                  <tr key={plate.id} className="hover:bg-primary-50/30 transition-colors group">
-                    <td className="p-6">
-                      <span className="text-2xl font-black text-slate-900 font-mono tracking-tighter tabular-nums transition-colors group-hover:text-primary-600" dir="ltr">{plate.plate_number}-4</span>
-                    </td>
-                    <td className="p-6">
-                      <div className="px-4 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs inline-block border border-slate-200">
-                        {plate.plate_type}
-                      </div>
-                    </td>
-                    <td className="p-6 text-slate-400 text-sm">{new Date(plate.received_date).toLocaleDateString('ar-YE', { day: 'numeric', month: 'long', year: 'numeric' })}</td>
-                    <td className="p-6">
-                      <span className={`px-4 py-1.5 rounded-2xl text-xs font-black border flex items-center gap-2 w-fit ${
-                        plate.status === 'available' 
-                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100 animate-pulse' 
-                        : 'bg-slate-100 text-slate-400 border-slate-200 line-through'
-                      }`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${plate.status === 'available' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                        {plate.status === 'available' ? 'متاح للترقيم' : 'تم استخدامه'}
-                      </span>
-                    </td>
-                    <td className="p-6">
-                      <div className="flex items-center justify-center gap-3">
-                        <button 
-                          onClick={() => setEditingPlate(plate)} 
-                          className="w-10 h-10 text-primary-600 bg-primary-50 rounded-xl flex items-center justify-center hover:bg-primary-600 hover:text-white transition-all border border-primary-100"
-                          title="تعديل"
-                        >
-                          <Edit2 className="w-5 h-5" />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(plate.id, plate.status)} 
-                          className="w-10 h-10 text-red-500 bg-red-50 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border border-red-100"
-                          title="حذف"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // Helper to convert OKLAB color to RGB/RGBA for html2canvas compatibility
 function oklabToRgb(l: number, aComponent: number, bComponent: number, a: number = 1): string {
@@ -2627,29 +2329,123 @@ function CertificateModal({ registration, onClose }: { registration: Registratio
     </div>
   );
 }
-const InputField = ({ label, value, onChange, placeholder, required, type = "text" }: any) => (
-  <div className="space-y-2 group">
-    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5 transition-colors group-focus-within:text-primary-500">
-      {label} {required && <span className="text-red-500">*</span>}
-    </label>
-    <div className="relative">
-      <input 
-        type={type} 
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full p-5 pr-6 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none focus:border-primary-500/20 focus:bg-white focus:shadow-[0_0_30px_rgba(14,165,233,0.08)] transition-all leading-relaxed"
-      />
-      {required && !value && (
-        <div className="absolute left-6 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse" />
+const InputField = ({ label, value, onChange, placeholder, required, type = "text" }: any) => {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [pasteFeedback, setPasteFeedback] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!pasteFeedback) return;
+    const timer = setTimeout(
+      () => setPasteFeedback(null),
+      pasteFeedback.type === 'success' ? 1800 : 4000
+    );
+    return () => clearTimeout(timer);
+  }, [pasteFeedback]);
+
+  const handlePasteClick = async () => {
+    inputRef.current?.focus();
+    setPasteFeedback(null);
+
+    const applyPastedText = (raw: string) => {
+      const normalized = raw.replace(/[\r\n]+/g, ' ').trim();
+      if (!normalized) {
+        setPasteFeedback({ type: 'info', message: 'الحافظة فارغة — انسخ النص أولاً' });
+        return false;
+      }
+      onChange(normalized);
+      setPasteFeedback({ type: 'success', message: 'تم اللصق' });
+      return true;
+    };
+
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        const clipText = await navigator.clipboard.readText();
+        applyPastedText(clipText);
+        return;
+      }
+    } catch {
+      // Clipboard API may be blocked by browser/iframe permissions; fall back below
+    }
+
+    try {
+      const executed = document.execCommand('paste');
+      if (executed) {
+        return;
+      }
+    } catch {
+      // Ignore legacy execCommand failure
+    }
+
+    setPasteFeedback({
+      type: 'info',
+      message: 'اضغط مطولاً داخل الحقل واختر «لصق» أو Ctrl+V',
+    });
+  };
+
+  const showPasteAction = isFocused || !value;
+
+  return (
+    <div className="space-y-2 group">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5 transition-colors group-focus-within:text-primary-500">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type={type}
+          value={value ?? ''}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          onPaste={() => setPasteFeedback(null)}
+          onChange={(e) => {
+            setPasteFeedback(null);
+            onChange(e.target.value);
+          }}
+          placeholder={placeholder}
+          className={`w-full p-5 pr-6 ${showPasteAction ? 'pl-24' : 'pl-6'} bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none select-text focus:border-primary-500/20 focus:bg-white focus:shadow-[0_0_30px_rgba(14,165,233,0.08)] transition-all leading-relaxed`}
+        />
+        {required && !value && (
+          <div className="pointer-events-none absolute left-[78px] top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-red-400 rounded-full animate-pulse" />
+        )}
+        {showPasteAction && (
+          <button
+            type="button"
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={handlePasteClick}
+            title="لصق من الحافظة إلى الحقل"
+            className={`absolute left-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-xl text-[11px] font-black flex items-center gap-1 transition-all border ${
+              pasteFeedback?.type === 'success'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-white text-slate-500 hover:text-primary-600 hover:border-primary-200 border-slate-200 shadow-sm active:scale-95'
+            }`}
+          >
+            {pasteFeedback?.type === 'success' ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span>تم</span>
+              </>
+            ) : (
+              <>
+                <ClipboardPaste className="w-3.5 h-3.5" />
+                <span>لصق</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+      {pasteFeedback?.type === 'info' && (
+        <p className="text-[11px] font-bold text-amber-600 mr-4">{pasteFeedback.message}</p>
       )}
     </div>
-  </div>
-);
+  );
+};
 
-function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: Plate[], setActiveTab: (t: MenuChoice) => void }) {
-  const [formData, setFormData] = useState({
-    plate_id: '',
+function RegistrationView({ onRefresh }: { onRefresh?: () => void }) {
+  const initialFormState = {
+    plate_number: '',
+    plate_type: 'خصوصي' as 'خصوصي' | 'نقل',
     vehicle_type: '',
     vehicle_color: '',
     model_year: '',
@@ -2682,60 +2478,92 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
     witness2_address: '',
     owner_photo: '',
     plate_photo: ''
-  });
+  };
+  const [formData, setFormData] = useState(initialFormState);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [showCertificate, setShowCertificate] = useState<Registration | null>(null);
   const [error, setError] = useState('');
   const [activeScanner, setActiveScanner] = useState<'customs' | 'owner_id' | 'witness1_id' | 'witness2_id' | null>(null);
+  const [scanFeedback, setScanFeedback] = useState<string>('');
 
   const handleScanCompleteForType = (type: 'customs' | 'owner_id' | 'witness1_id' | 'witness2_id', scannedData: any) => {
-    if (!scannedData) return;
-    
+    if (!scannedData || typeof scannedData !== 'object') return;
+
+    const cleanText = (val: any): string => {
+      if (val === null || val === undefined) return '';
+      const str = String(val).trim();
+      if (!str || ['غير واضح', 'غير موجود', 'غير متوفر', 'لا يوجد', 'غير محدد', 'null', 'undefined', 'n/a', 'na', '---', '--', '-'].includes(str.toLowerCase())) {
+        return '';
+      }
+      return str;
+    };
+
+    const cleanDigits = (val: any): string => {
+      return cleanText(val)
+        .replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+        .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+    };
+
+    const normalizeBlood = (val: any): string => {
+      const raw = cleanText(val).replace(/فصيلة|زمرة|الدم|:/g, '').trim().toUpperCase();
+      if (!raw) return '';
+      const match = raw.match(/^(AB|A|B|O)\s*([+-])$/) || raw.match(/^([+-])\s*(AB|A|B|O)$/);
+      if (match) {
+        return match[1] === '+' || match[1] === '-' ? `${match[2]}${match[1]}` : `${match[1]}${match[2]}`;
+      }
+      return raw;
+    };
+
+    const updates: Partial<typeof initialFormState> = {};
+    const addUpdate = (field: keyof typeof initialFormState, nextVal: string) => {
+      if (nextVal) {
+        (updates as any)[field] = nextVal;
+      }
+    };
+
     if (type === 'customs') {
-      setFormData(prev => ({
-        ...prev,
-        document_number: scannedData.document_number || prev.document_number,
-        customs_office: scannedData.customs_office || prev.customs_office,
-        vehicle_make: scannedData.vehicle_make || prev.vehicle_make,
-        vehicle_type: scannedData.vehicle_type || prev.vehicle_type,
-        vehicle_model: scannedData.vehicle_model || scannedData.vehicle_type || prev.vehicle_model,
-        vehicle_shape: scannedData.vehicle_shape || prev.vehicle_shape,
-        vehicle_color: scannedData.vehicle_color || prev.vehicle_color,
-        model_year: scannedData.model_year || prev.model_year,
-        chassis_number: scannedData.chassis_number || prev.chassis_number,
-        engine_number: scannedData.engine_number || prev.engine_number,
-        cylinders: scannedData.cylinders || prev.cylinders,
-        fuel_type: scannedData.fuel_type || prev.fuel_type,
-      }));
+      addUpdate('document_number', cleanDigits(scannedData.document_number));
+      addUpdate('customs_office', cleanText(scannedData.customs_office));
+      addUpdate('vehicle_make', cleanText(scannedData.vehicle_make));
+      addUpdate('vehicle_type', cleanText(scannedData.vehicle_type));
+      addUpdate('vehicle_model', cleanText(scannedData.vehicle_model));
+      addUpdate('vehicle_shape', cleanText(scannedData.vehicle_shape));
+      addUpdate('vehicle_color', cleanText(scannedData.vehicle_color));
+      addUpdate('model_year', cleanDigits(scannedData.model_year));
+      addUpdate('chassis_number', cleanDigits(scannedData.chassis_number).replace(/\s+/g, '').toUpperCase());
+      addUpdate('engine_number', cleanDigits(scannedData.engine_number));
+      addUpdate('cylinders', cleanDigits(scannedData.cylinders));
+      addUpdate('fuel_type', cleanText(scannedData.fuel_type));
     } else if (type === 'owner_id') {
-      setFormData(prev => ({
-        ...prev,
-        owner_name: scannedData.owner_name || prev.owner_name,
-        id_type: scannedData.id_type || prev.id_type,
-        id_number: scannedData.id_number || prev.id_number,
-        issue_place: scannedData.issue_place || prev.issue_place,
-        address: scannedData.address || prev.address,
-        blood_type: scannedData.blood_type || prev.blood_type,
-      }));
+      addUpdate('owner_name', cleanText(scannedData.owner_name));
+      addUpdate('id_type', cleanText(scannedData.id_type));
+      addUpdate('id_number', cleanDigits(scannedData.id_number).replace(/\s+/g, ''));
+      addUpdate('issue_place', cleanText(scannedData.issue_place));
+      addUpdate('address', cleanText(scannedData.address));
+      addUpdate('blood_type', normalizeBlood(scannedData.blood_type));
     } else if (type === 'witness1_id') {
-      setFormData(prev => ({
-        ...prev,
-        witness1_name: scannedData.witness_name || prev.witness1_name,
-        witness1_id: scannedData.witness_id || prev.witness1_id,
-        witness1_phone: scannedData.witness_phone || prev.witness1_phone,
-        witness1_address: scannedData.witness_address || prev.witness1_address,
-        witness1_relation: scannedData.witness_relation || prev.witness1_relation,
-      }));
+      addUpdate('witness1_name', cleanText(scannedData.witness_name));
+      addUpdate('witness1_id', cleanDigits(scannedData.witness_id).replace(/\s+/g, ''));
+      addUpdate('witness1_phone', cleanDigits(scannedData.witness_phone));
+      addUpdate('witness1_address', cleanText(scannedData.witness_address));
+      addUpdate('witness1_relation', cleanText(scannedData.witness_relation));
     } else if (type === 'witness2_id') {
-      setFormData(prev => ({
-        ...prev,
-        witness2_name: scannedData.witness_name || prev.witness2_name,
-        witness2_id: scannedData.witness_id || prev.witness2_id,
-        witness2_phone: scannedData.witness_phone || prev.witness2_phone,
-        witness2_address: scannedData.witness_address || prev.witness2_address,
-        witness2_relation: scannedData.witness_relation || prev.witness2_relation,
-      }));
+      addUpdate('witness2_name', cleanText(scannedData.witness_name));
+      addUpdate('witness2_id', cleanDigits(scannedData.witness_id).replace(/\s+/g, ''));
+      addUpdate('witness2_phone', cleanDigits(scannedData.witness_phone));
+      addUpdate('witness2_address', cleanText(scannedData.witness_address));
+      addUpdate('witness2_relation', cleanText(scannedData.witness_relation));
+    }
+
+    const filledCount = Object.keys(updates).length;
+    if (filledCount > 0) {
+      setFormData(prev => ({ ...prev, ...updates }));
+      const sectionLabel =
+        type === 'customs' ? 'البيان الجمركي' :
+        type === 'owner_id' ? 'بطاقة المالك' :
+        type === 'witness1_id' ? 'بطاقة المعرّف الأول' : 'بطاقة المعرّف الثاني';
+      setScanFeedback(`تم استخراج وتعبئة ${filledCount} حقل من ${sectionLabel} بنجاح — يرجى مراجعة البيانات قبل الحفظ.`);
     }
   };
 
@@ -2747,8 +2575,16 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
 
 
   const handleSubmit = async () => {
-    if (!formData.plate_id) {
-      setError('الرجاء اختيار اللوحة المتاحة لإتمام عملية الترقيم');
+    if (!formData.plate_number.trim()) {
+      setError('الرجاء إدخال رقم اللوحة يدوياً لإتمام عملية الترقيم');
+      return;
+    }
+    if (formData.plate_type !== 'خصوصي' && formData.plate_type !== 'نقل') {
+      setError('الرجاء اختيار نوع اللوحة (خصوصي أو نقل)');
+      return;
+    }
+    if (!formData.vehicle_type.trim() || !formData.chassis_number.trim() || !formData.owner_name.trim()) {
+      setError('الرجاء تعبئة الحقول المطلوبة (نوع المركبة، رقم الشاصيه، اسم المالك)');
       return;
     }
     setError('');
@@ -2768,42 +2604,9 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
       const newReg = await res.json();
       setSuccess(true);
       setShowCertificate(newReg);
-      
-      setFormData({
-          plate_id: '',
-          vehicle_type: '',
-          vehicle_color: '',
-          model_year: '',
-          chassis_number: '',
-          engine_number: '',
-          document_number: '',
-          owner_name: '',
-          owner_phone: '',
-          notes: '',
-          blood_type: '',
-          id_type: 'بطاقة شخصية',
-          id_number: '',
-          issue_place: '',
-          address: '',
-          vehicle_make: '',
-          vehicle_model: '',
-          vehicle_shape: '',
-          cylinders: '4',
-          fuel_type: 'بنزين',
-          customs_office: '',
-          witness1_name: '',
-          witness1_id: '',
-          witness1_relation: '',
-          witness1_phone: '',
-          witness1_address: '',
-          witness2_name: '',
-          witness2_id: '',
-          witness2_relation: '',
-          witness2_phone: '',
-          witness2_address: '',
-          owner_photo: '',
-          plate_photo: ''
-      });
+      setFormData(initialFormState);
+      setScanFeedback('');
+      if (onRefresh) onRefresh();
     } catch (err: any) {
       setError(getFriendlyErrorMessage(err, 'فشل عملية الترقيم'));
     } finally {
@@ -2832,6 +2635,22 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
           </div>
           
           <div className="space-y-12">
+            {scanFeedback && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-6 py-4 rounded-2xl flex items-center justify-between gap-4 text-sm font-black">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
+                  <span>{scanFeedback}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScanFeedback('')}
+                  className="text-emerald-500 hover:text-emerald-700"
+                  title="إغلاق التنبيه"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {/* القسم الأول: البيانات الفنية والمستندات للمركبة */}
             <div className="bg-slate-50/50 p-10 rounded-[2.5rem] border border-slate-100 space-y-8">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -2849,18 +2668,41 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-                <div className="space-y-3 group">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mr-6 group-focus-within:text-primary-500 transition-colors">اختر اللوحة المتاحة *</label>
-                  <select 
-                    value={formData.plate_id}
-                    onChange={(e) => setFormData({...formData, plate_id: e.target.value})}
-                    className="w-full p-5 border-2 border-transparent rounded-2xl bg-white focus:border-primary-500/20 outline-none font-black text-lg transition-all shadow-sm h-[68px] text-slate-700"
-                  >
-                    <option value="">-- اختر من القائمة --</option>
-                    {Array.isArray(availablePlates) && availablePlates.map(p => (
-                      <option key={p.id} value={p.id}>{p.plate_number}-4 | {p.plate_type}</option>
-                    ))}
-                  </select>
+                <InputField
+                  label="رقم اللوحة"
+                  value={formData.plate_number}
+                  onChange={(v: any) => setFormData({ ...formData, plate_number: v })}
+                  placeholder="أدخل رقم اللوحة يدوياً..."
+                  required
+                />
+                <div className="space-y-2 group">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5">
+                    نوع اللوحة <span className="text-red-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-50 rounded-2xl h-[68px]">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, plate_type: 'خصوصي' })}
+                      className={`rounded-xl font-black text-base transition-all ${
+                        formData.plate_type === 'خصوصي'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                      }`}
+                    >
+                      خصوصي
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, plate_type: 'نقل' })}
+                      className={`rounded-xl font-black text-base transition-all ${
+                        formData.plate_type === 'نقل'
+                          ? 'bg-red-600 text-white shadow-md'
+                          : 'bg-transparent text-slate-500 hover:bg-white hover:text-slate-700'
+                      }`}
+                    >
+                      نقل
+                    </button>
+                  </div>
                 </div>
                 <InputField label="رقم البيان الجمركي" value={formData.document_number} onChange={(v:any) => setFormData({...formData, document_number: v})} placeholder="رقم التسجيل" />
                 <InputField label="جهة إصدار البيان" value={formData.customs_office} onChange={(v:any) => setFormData({...formData, customs_office: v})} placeholder="جمارك ميناء..." />
@@ -3014,12 +2856,14 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
               </div>
             )}
             <button 
-              onClick={() => window.location.reload()}
+              type="button"
+              onClick={() => { setFormData(initialFormState); setError(''); setScanFeedback(''); }}
               className="px-10 py-5 border-2 border-slate-100 text-slate-400 rounded-[1.75rem] font-black text-xl hover:bg-slate-50 transition-all"
             >
               إلغاء التعبأة
             </button>
             <button 
+              type="button"
               onClick={handleSubmit}
               disabled={submitting}
               className="flex-1 md:flex-none bg-emerald-600 text-white px-16 py-5 rounded-[1.75rem] font-black text-2xl hover:bg-emerald-700 transition-all shadow-2xl shadow-emerald-100 flex items-center justify-center gap-5 disabled:opacity-50 active:scale-[0.98]"
@@ -3031,24 +2875,6 @@ function RegistrationView({ availablePlates, setActiveTab }: { availablePlates: 
         </div>
         <div className="absolute -top-64 -right-64 w-[500px] h-[500px] bg-emerald-50 rounded-full opacity-30 blur-[120px] pointer-events-none" />
       </div>
-
-      {!availablePlates.length && (
-        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-amber-50 border-2 border-amber-100 p-8 rounded-[2.5rem] flex items-center gap-8 text-amber-700 shadow-sm">
-          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center border border-amber-200 shrink-0">
-             <AlertCircle className="w-8 h-8 text-amber-500" />
-          </div>
-          <div>
-            <p className="text-xl font-black tracking-tight">نفاذ مخزون اللوحات المتاحة</p>
-            <p className="font-bold opacity-80 leading-relaxed text-lg">يرجى إضافة لوحات جديدة من قسم الأرشيف أولاً للتمكن من ترقيم مركبات جديدة.</p>
-          </div>
-          <button 
-            onClick={() => setActiveTab('archive')}
-            className="mr-auto px-10 py-5 bg-amber-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl shadow-amber-200 hover:bg-amber-700 transition-all active:scale-95"
-          >
-            إضافة لوحات الآن
-          </button>
-        </motion.div>
-      )}
 
       {activeScanner && (
         <AIScannerModal
@@ -3081,6 +2907,8 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
     r.vehicle_model?.includes(searchTerm) ||
     r.vehicle_make?.includes(searchTerm)
   );
+
+  const displayedRegistrations = searchTerm.trim() ? filtered : filtered.slice(0, 5);
 
   const handlePrint = () => {
     window.print();
@@ -3214,14 +3042,12 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
                     <div className="space-y-2 group">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] mr-5 transition-colors group-focus-within:text-primary-500">نوع اللوحة</label>
                       <select 
-                        value={editingReg.plate_type || 'خصوصي'} 
+                        value={editingReg.plate_type === 'نقل' ? 'نقل' : 'خصوصي'} 
                         onChange={e => setEditingReg({...editingReg, plate_type: e.target.value})} 
-                        className="w-full p-5 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-705 outline-none focus:border-primary-500/20 focus:bg-white transition-all text-right h-[68px]"
+                        className="w-full p-5 bg-slate-50 border-2 border-transparent rounded-2xl font-black text-slate-700 outline-none focus:border-primary-500/20 focus:bg-white transition-all text-right h-[68px]"
                       >
-                        <option>خصوصي</option>
-                        <option>نقل</option>
-                        <option>أجرة</option>
-                        <option>حكومي</option>
+                        <option value="خصوصي">خصوصي</option>
+                        <option value="نقل">نقل</option>
                       </select>
                     </div>
                     <InputField 
@@ -3479,7 +3305,7 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
         <div className="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
           <div>
             <h3 className="text-3xl font-black text-slate-800">الأرشيف العام للسيارات المرقمة</h3>
-            <p className="text-slate-400 font-bold text-sm">بحث متقدم في قاعدة بيانات السيارات التي تم منحها لوحات معدنية</p>
+            <p className="text-slate-400 font-bold text-sm">عرض آخر 5 معاملات مسجلة في الأرشيف فقط (استخدم خانة البحث للوصول إلى أي معاملة أخرى)</p>
           </div>
           <div className="flex items-center gap-4 w-full md:w-auto">
             <div className="relative flex-1 md:w-80 group">
@@ -3514,12 +3340,12 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 font-bold">
-              {filtered.length === 0 ? (
+              {displayedRegistrations.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="p-20 text-center text-slate-300 italic text-lg">لا توجد بيانات مطابقة لعملية البحث حالياً</td>
                 </tr>
               ) : (
-                filtered.map(reg => (
+                displayedRegistrations.map(reg => (
                   <tr key={reg.id} className="hover:bg-primary-50/20 transition-all group">
                     <td className="p-6">
                       <div className="flex flex-col">
@@ -3578,8 +3404,7 @@ function FullArchiveView({ registrations, onRefresh }: { registrations: Registra
   );
 }
 
-function ReportsView({ stats, plates, registrations }: { stats: Stats | null, plates: Plate[], registrations: Registration[] }) {
-  const [seeding, setSeeding] = useState(false);
+function ReportsView({ stats, registrations }: { stats: Stats | null, registrations: Registration[] }) {
   const [backingUp, setBackingUp] = useState(false);
   const [syncing, setSyncing] = useState(false);
   
@@ -3595,22 +3420,6 @@ function ReportsView({ stats, plates, registrations }: { stats: Stats | null, pl
     }
   };
 
-  const handleSeed = async () => {
-    if (!confirm('هل تريد إضافة بيانات تجريبية لفحص النظام؟')) return;
-    setSeeding(true);
-    try {
-      const res = await fetch('/api/seed', { method: 'POST' });
-      if (!res.ok) throw new Error('فشل توليد البيانات');
-      alert('تم توليد البيانات التجريبية بنجاح');
-      window.location.reload();
-    } catch (err: any) {
-      console.error(err);
-      alert(getFriendlyErrorMessage(err, 'فشل في إضافة البيانات التجريبية'));
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   const handleSyncCloud = async () => {
     setSyncing(true);
     try {
@@ -3619,7 +3428,7 @@ function ReportsView({ stats, plates, registrations }: { stats: Stats | null, pl
       if (!res.ok) {
         throw new Error(data.error || 'فشلت عملية المزامنة');
       }
-      alert(`تمت مزامنة البيانات السحابية والمحلية ثنائية الاتجاه بنجاح!\nاللوحات المعدنية المحدثة والمطابقة: ${data.platesSynced}\nالمركبات المدققة والمستخرجة: ${data.regsSynced}`);
+      alert(`تمت مزامنة البيانات السحابية والمحلية ثنائية الاتجاه بنجاح!\nالمركبات المدققة والمستخرجة: ${data.regsSynced}`);
       window.location.reload();
     } catch (err: any) {
       console.error(err);
@@ -3631,6 +3440,9 @@ function ReportsView({ stats, plates, registrations }: { stats: Stats | null, pl
 
   if (!stats) return <div className="text-center p-20 text-slate-400 font-black">جاري تحميل التقارير الذكية...</div>;
 
+  const privateTotal = stats.privateCount ?? registrations.filter(r => r.plate_type === 'خصوصي').length;
+  const transportTotal = stats.transportCount ?? registrations.filter(r => r.plate_type === 'نقل').length;
+
   return (
     <div className="max-w-full space-y-10 animate-in fade-in duration-700">
        <div className="flex flex-col md:flex-row justify-between items-center bg-white p-10 rounded-[3rem] border border-slate-100 card-shadow gap-6 relative overflow-hidden group">
@@ -3640,7 +3452,7 @@ function ReportsView({ stats, plates, registrations }: { stats: Stats | null, pl
             </div>
             <div>
               <h3 className="font-black text-3xl text-slate-800">أدوات التحكم النظامية</h3>
-              <p className="text-slate-400 font-bold text-sm">إدارة البيانات، النسخ الاحتياطي، واختبار كفاءة الأرشفة</p>
+              <p className="text-slate-400 font-bold text-sm">إدارة البيانات، النسخ الاحتياطي، ومزامنة السحابة</p>
             </div>
           </div>
           <div className="flex items-center gap-6 w-full md:w-auto relative z-10 flex-wrap">
@@ -3660,22 +3472,14 @@ function ReportsView({ stats, plates, registrations }: { stats: Stats | null, pl
               <Database className={`w-7 h-7 ${backingUp ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} />
               تصدير الأرشيف الكامل
             </button>
-            <button 
-              onClick={handleSeed}
-              disabled={seeding}
-              className="flex-1 md:flex-none flex items-center justify-center gap-4 px-10 py-5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-[1.75rem] text-xl font-black transition-all disabled:opacity-50 border-2 border-slate-200 group"
-            >
-              <PlusCircle className={`w-7 h-7 ${seeding ? 'animate-spin' : 'group-hover:scale-110 transition-transform'}`} />
-              توليد بيانات اختبارية
-            </button>
           </div>
           <div className="absolute -top-24 -left-24 w-64 h-64 bg-slate-50 rounded-full opacity-50 blur-3xl pointer-events-none" />
        </div>
 
        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <StatCard label="إجمالي المخزون" value={stats.total} icon={Archive} color="bg-primary-600" />
-        <StatCard label="المركبات المسجلة" value={stats.used} icon={Car} color="bg-emerald-600" />
-        <StatCard label="اللوحات المتاحة" value={stats.available} icon={PlusCircle} color="bg-amber-500" />
+        <StatCard label="إجمالي المركبات المرقمة" value={stats.used} icon={Car} color="bg-emerald-600" />
+        <StatCard label="مركبات الخصوصي" value={privateTotal} icon={ShieldCheck} color="bg-blue-600" />
+        <StatCard label="مركبات النقل" value={transportTotal} icon={TrendingUp} color="bg-red-600" />
       </div>
 
       <div className="bg-white p-10 rounded-[3rem] border border-slate-100 card-shadow">

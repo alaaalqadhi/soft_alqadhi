@@ -6,13 +6,12 @@ import { motion, AnimatePresence } from 'motion/react';
 const compressAndResizeImage = (base64Str: string): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
-    img.src = base64Str;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 1000; // Optimal size for document OCR scanning
-      const MAX_HEIGHT = 1000;
-      let width = img.width;
-      let height = img.height;
+      const MAX_WIDTH = 2048; // Crisp small-text OCR while staying fast and well under Vercel's 4.5MB limit
+      const MAX_HEIGHT = 2048;
+      let width = img.naturalWidth || img.width;
+      let height = img.naturalHeight || img.height;
 
       if (width > MAX_WIDTH || height > MAX_HEIGHT) {
         if (width > height) {
@@ -28,9 +27,21 @@ const compressAndResizeImage = (base64Str: string): Promise<string> => {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        // Fill solid white background first so transparent PNGs/screenshots don't turn solid black on JPEG export
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as image/jpeg with 0.75 quality for super high compression & decent OCR details
-        resolve(canvas.toDataURL('image/jpeg', 0.75));
+
+        let result = canvas.toDataURL('image/jpeg', 0.90);
+        if (result.length > 2_600_000) {
+          result = canvas.toDataURL('image/jpeg', 0.82);
+        }
+        if (result.length > 2_600_000) {
+          result = canvas.toDataURL('image/jpeg', 0.72);
+        }
+        resolve(result);
       } else {
         resolve(base64Str);
       }
@@ -38,6 +49,7 @@ const compressAndResizeImage = (base64Str: string): Promise<string> => {
     img.onerror = () => {
       resolve(base64Str);
     };
+    img.src = base64Str;
   });
 };
 
@@ -75,7 +87,7 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
     try {
       setCameraError('');
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
       });
       setStream(mediaStream);
       setIsCameraActive(true);
@@ -109,13 +121,17 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
         canvas.height = video.videoHeight || 480;
         
         // Draw video frame to canvas
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         
-        // Convert to base64 (using standard toDataURL, and wrapping with compression)
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        // Export lossless PNG intermediate so compressAndResizeImage compresses to JPEG only once
+        const dataUrl = canvas.toDataURL('image/png');
         
         compressAndResizeImage(dataUrl).then(compressed => {
           setCapturedImage(compressed);
+          setScanError('');
+          setSuccess(false);
         });
         
         // Stop camera stream to release webcam
@@ -130,14 +146,24 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const rawBase64 = reader.result as string;
+        if (typeof reader.result !== 'string') {
+          setScanError('تعذر قراءة ملف الصورة المختار. يرجى اختيار صورة صالحة.');
+          return;
+        }
+        const rawBase64 = reader.result;
         compressAndResizeImage(rawBase64).then(compressed => {
           setCapturedImage(compressed);
           setActiveMode('upload');
+          setScanError('');
+          setSuccess(false);
         });
+      };
+      reader.onerror = () => {
+        setScanError('تعذر قراءة ملف الصورة من الجهاز. يرجى المحاولة بصورة أخرى.');
       };
       reader.readAsDataURL(file);
     }
@@ -155,36 +181,61 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
     setScanError('');
     
     try {
-      const response = await fetch('/api/analyze-image', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          image: capturedImage,
-          docType: docType === 'witness1_id' || docType === 'witness2_id' ? 'witness' : docType
-        })
+      const requestPayload = JSON.stringify({
+        image: capturedImage,
+        docType: docType === 'witness1_id' || docType === 'witness2_id' ? 'witness' : docType
       });
 
-      const rawText = await response.text();
+      let response: Response | null = null;
       let parsedBody: any = null;
-      try {
-        parsedBody = rawText ? JSON.parse(rawText) : null;
-      } catch {
-        parsedBody = null;
+
+      // Retry once automatically on transient 502/503/504 service spikes
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+        }
+        response = await fetch('/api/analyze-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: requestPayload
+        });
+
+        const rawText = await response.text();
+        try {
+          parsedBody = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          parsedBody = null;
+        }
+
+        if (response.ok || ![502, 503, 504].includes(response.status)) {
+          break;
+        }
       }
 
-      if (!response.ok) {
-        throw new Error(parsedBody?.error || 'حدث خطأ في قراءة الصورة بالذكاء الاصطناعي');
+      if (!response || !response.ok) {
+        if (response?.status === 413) {
+          throw new Error('حجم الصورة كبير جداً. يرجى اختيار صورة أصغر أو تصويرها مجدداً.');
+        }
+        if (response?.status === 504) {
+          throw new Error('انتهت مهلة تحليل الصورة في الخادم. يرجى المحاولة مرة أخرى.');
+        }
+        throw new Error(parsedBody?.error || 'حدث خطأ في قراءة الصورة بالذكاء الاصطناعي، يرجى المحاولة مرة أخرى.');
       }
 
       const extractedData = parsedBody;
+      const hasExtractedValue = extractedData && typeof extractedData === 'object' && Object.values(extractedData).some(v => String(v ?? '').trim() !== '');
+      if (!hasExtractedValue) {
+        throw new Error('لم يتم العثور على بيانات واضحة في الصورة. يرجى التقاط صورة أوضح أو تدويرها والمحاولة مجدداً.');
+      }
+
       setSuccess(true);
-      
+      onScanComplete(extractedData);
+
       setTimeout(() => {
-        onScanComplete(extractedData);
         onClose();
-      }, 1200);
+      }, 900);
       
     } catch (err: any) {
       console.error('Scan processing error:', err);
@@ -192,6 +243,26 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
     } finally {
       setScanning(false);
     }
+  };
+
+  const handleRotateCaptured = () => {
+    if (!capturedImage || scanning) return;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalHeight || img.height;
+      canvas.height = img.naturalWidth || img.width;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      setCapturedImage(canvas.toDataURL('image/jpeg', 0.95));
+      setScanError('');
+    };
+    img.src = capturedImage;
   };
 
   const resetScanner = () => {
@@ -299,7 +370,7 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
                     autoPlay 
                     playsInline 
                     muted
-                    className="w-full h-full object-cover scale-x-[-1] md:scale-x-1"
+                    className="w-full h-full object-cover"
                   />
                   
                   {/* Overlay guidelines box */}
@@ -383,20 +454,30 @@ export function AIScannerModal({ onClose, onScanComplete, docType, title }: AISc
 
                 {!scanning && !success && (
                   <div className="flex flex-col items-center gap-4 w-full max-w-md">
-                    <div className="flex items-center gap-4 w-full">
+                    <div className="flex flex-wrap items-center gap-3 w-full">
                       <button
                         onClick={processImageWithAI}
                         type="button"
-                        className="flex-1 px-8 py-5 bg-emerald-600 text-white rounded-2xl font-black shadow-xl shadow-emerald-200 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-3"
+                        className="flex-1 min-w-[180px] px-6 py-4 bg-emerald-600 text-white rounded-2xl font-black shadow-xl shadow-emerald-200 hover:bg-emerald-700 transition-all active:scale-95 flex items-center justify-center gap-2"
                       >
-                        <Sparkles className="w-6 h-6" />
+                        <Sparkles className="w-5 h-5" />
                         الاستخراج بالذكاء الاصطناعي
+                      </button>
+
+                      <button
+                        onClick={handleRotateCaptured}
+                        type="button"
+                        className="px-4 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-black transition-all active:scale-95 flex items-center gap-1.5"
+                        title="تدوير الصورة 90 درجة"
+                      >
+                        <RotateCw className="w-4 h-4" />
+                        تدوير
                       </button>
                       
                       <button
                         onClick={resetScanner}
                         type="button"
-                        className="px-6 py-5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black transition-all active:scale-95"
+                        className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black transition-all active:scale-95"
                       >
                         إعادة تصوير
                       </button>

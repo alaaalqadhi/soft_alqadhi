@@ -8,8 +8,8 @@ const compressAndResizeImage = (base64Str: string): Promise<string> => {
     img.src = base64Str;
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 1000; // Optimal size for document OCR scanning
-      const MAX_HEIGHT = 1000;
+      const MAX_WIDTH = 1600;
+      const MAX_HEIGHT = 1600;
       let width = img.width;
       let height = img.height;
 
@@ -28,8 +28,7 @@ const compressAndResizeImage = (base64Str: string): Promise<string> => {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(img, 0, 0, width, height);
-        // Compress as image/jpeg with 0.75 quality for super high compression & decent OCR details
-        resolve(canvas.toDataURL('image/jpeg', 0.75));
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
       } else {
         resolve(base64Str);
       }
@@ -228,7 +227,7 @@ export function PhotoCaptureInput({ label, value, onChange, id, docType, onScanC
                 autoPlay 
                 playsInline 
                 muted 
-                className="w-full h-full object-cover scale-x-[-1] md:scale-x-1" 
+                className="w-full h-full object-cover" 
               />
             </div>
             <div className="flex items-center gap-2">
